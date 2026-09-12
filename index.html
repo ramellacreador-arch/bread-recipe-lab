@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bread Recipe Lab</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#1c4937" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="label-design.css" media="screen" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Cottage bakery workspace</p>
+          <h1>Bread Recipe Lab</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost-button icon-text-button" id="toggle-theme" type="button" title="Toggle dark mode">Dark Mode</button>
+          <button class="ghost-button" id="export-json" type="button" title="Export all saved recipes">Export</button>
+          <button class="ghost-button" id="import-json" type="button" title="Import saved recipe data">Import</button>
+          <input id="import-file" type="file" accept="application/json" hidden />
+          <button class="primary-button" id="new-recipe" type="button">New Recipe</button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar" aria-label="Saved recipes">
+          <div class="sidebar-header">
+            <h2>Recipes</h2>
+            <span id="recipe-count" class="count-pill">0</span>
+          </div>
+          <div id="recipe-list" class="recipe-list"></div>
+          <div class="sidebar-footer">
+            <p id="save-status">Saved locally in this browser.</p>
+          </div>
+        </aside>
+
+        <main class="workspace">
+          <div class="menu-shell">
+            <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="workspace-menu">Menu</button>
+            <nav id="workspace-menu" class="tabs" aria-label="Workspace sections">
+              <a class="tab-button is-active" href="index.html">Recipe</a>
+              <a class="tab-button" href="batch.html">Batch Log</a>
+              <a class="tab-button" href="lots.html">Flour Lots</a>
+              <a class="tab-button" href="orders.html">Orders</a>
+              <button class="tab-button" data-tab="label" type="button">Product Label</button>
+              <a class="tab-button" href="importer.html">Importer</a>
+              <a class="tab-button" href="rules.html">Rules Snapshot</a>
+            </nav>
+          </div>
+
+          <section id="workspace-panel" class="workspace-panel"></section>
+        </main>
+      </div>
+
+      <div class="floating-actions" aria-label="Quick actions">
+        <button class="ghost-button" id="undo-action" type="button" title="Undo last change">Undo</button>
+        <button class="ghost-button" id="redo-action" type="button" title="Redo last change">Redo</button>
+        <button class="secondary-button" data-action="print-recipe" type="button" title="Print recipe or save as PDF">Print</button>
+        <button class="primary-button" id="manual-save" type="button" title="Save now">Save</button>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script src="menu.js"></script>
+  </body>
+</html>
