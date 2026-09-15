@@ -5,7 +5,7 @@ for (const file of await readdir('.')) {
   const ext = file.slice(file.lastIndexOf('.'));
   if (!mime[ext]) continue;
   let bytes = await readFile(file);
-  if (file === 'index.html') bytes = Buffer.from(bytes.toString().replace('<script src="app.js">', '<script>window.BREAD_CLOUD = true;</script><script src="cloud-sync.js"></script><script src="app.js">'));
+  if (file === 'index.html') bytes = Buffer.from(bytes.toString().replace('<script type="module" src="app.js">', '<script>window.BREAD_CLOUD = true;</script><script src="cloud-sync.js"></script><script type="module" src="app.js">'));
   assets['/' + file] = { type: mime[ext], data: bytes.toString('base64') };
 }
 await mkdir('dist/server', { recursive: true });

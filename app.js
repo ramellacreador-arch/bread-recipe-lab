@@ -1,3 +1,5 @@
+import { convertFromGrams, convertToGrams, formatMeasurement } from "./conversion.js";
+
 const STORAGE_KEY = "bread-recipe-lab-v1";
 const RECIPE_SEED_KEY = "bread-recipe-lab-seeds-v1";
 const DISCLOSURE =
@@ -191,6 +193,12 @@ document.addEventListener("click", (event) => {
     case "scale-by-multiplier":
       scaleActiveRecipeByMultiplier();
       break;
+    case "convert-cups-to-weight":
+      convertCupsToWeight(recipe);
+      break;
+    case "convert-weight-to-cups":
+      convertWeightToCups(recipe);
+      break;
     case "adjust-dough-weight":
       adjustDoughWeightMetric();
       break;
@@ -226,6 +234,9 @@ document.addEventListener("click", (event) => {
       break;
     case "copy-label":
       copyLabelText();
+      break;
+    case "download-barcode":
+      downloadBarcode(recipe);
       break;
     case "print-label":
       printProductLabel(recipe);
@@ -1081,6 +1092,58 @@ function renderRecipeTab(recipe) {
               ${quickCalc("Salt", `${round(metrics.saltPercent)}%`)}
               ${quickCalc("Yield", `${metrics.loafYield} items`)}
             </div>
+            <div class="conversion-panel">
+              <div class="section-title">
+                <div>
+                  <h4>Ingredient measurements</h4>
+                  <p class="hint">Cups use ingredient-specific density estimates. Grams remain the recipe's canonical weight.</p>
+                </div>
+              </div>
+              <div class="form-grid compact">
+                <div class="field">
+                  <label for="conversion-ingredient">Ingredient</label>
+                  <select id="conversion-ingredient">
+                    ${recipe.ingredients.map((item) => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.name || "Unnamed ingredient")}</option>`).join("")}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="conversion-cups">Cup amount</label>
+                  <input id="conversion-cups" type="text" inputmode="decimal" placeholder="1 1/2" />
+                </div>
+                <div class="field">
+                  <label>Weight output</label>
+                  <output id="conversion-result" class="conversion-result">Enter a cup amount</output>
+                </div>
+              </div>
+              <button class="secondary-button" id="convert-cups-to-weight" type="button">Convert cups to grams</button>
+              <div class="form-grid compact conversion-reverse">
+                <div class="field">
+                  <label for="conversion-weight">Weight amount</label>
+                  <input id="conversion-weight" type="number" min="0" step="0.1" placeholder="240" />
+                </div>
+                <div class="field">
+                  <label for="conversion-weight-unit">Weight unit</label>
+                  <select id="conversion-weight-unit"><option value="g">grams</option><option value="kg">kilograms</option></select>
+                </div>
+                <div class="field">
+                  <label>Volume output</label>
+                  <output id="conversion-reverse-result" class="conversion-result">Enter a weight</output>
+                </div>
+              </div>
+              <button class="ghost-button" id="convert-weight-to-cups" type="button">Convert weight to cups</button>
+              <div class="table-wrap conversion-table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>Ingredient</th><th>Weight output</th><th>Approx. cups</th></tr></thead>
+                  <tbody>
+                    ${recipe.ingredients.filter((item) => Number(item.grams) > 0).map((item) => {
+                      const conversion = convertFromGrams(item.grams, "cup", item);
+                      return `<tr><td>${escapeHtml(item.name || item.label || "Unnamed ingredient")}</td><td>${escapeHtml(formatMeasurement(item.grams, "g"))} / ${escapeHtml(formatMeasurement(item.grams / 1000, "kg"))}</td><td>${escapeHtml(formatMeasurement(conversion.amount, "cup"))}${conversion.estimated ? " (estimate)" : ""}</td></tr>`;
+                    }).join("") || `<tr><td colspan="3">Add ingredient weights to see recipe-wide output.</td></tr>`}
+                  </tbody>
+                </table>
+              </div>
+              <p class="hint">Unknown ingredients use a flour-like estimate and are marked as estimates. Confirm with a scale before selling or printing a final label.</p>
+            </div>
           </details>
 
           <details class="workflow-card" id="costing" open>
@@ -1671,6 +1734,13 @@ function renderLabelTab(recipe) {
             ${labelField("Packaged on", "date", recipe.label.packageDate, "packageDate")}
             ${labelField("Best by", "date", recipe.label.bestBy, "bestBy")}
             ${labelField("Contact", "text", recipe.label.contact, "contact")}
+            ${labelField("Square SKU", "text", recipe.label.squareSku, "squareSku")}
+            ${labelField("GTIN / UPC (optional)", "text", recipe.label.gtin, "gtin")}
+          </div>
+          <div class="barcode-tools">
+            <p class="hint">Use the Square SKU for internal Square checkout. Leave GTIN blank unless you have a legitimate GS1-issued number.</p>
+            <div class="barcode-preview">${renderBarcode(recipe.label.squareSku)}</div>
+            <button class="ghost-button" id="download-barcode" type="button">Download Code 128 barcode</button>
           </div>
           <label class="checkbox-row">
             <input type="checkbox" data-label-field="useScdaId" ${recipe.label.useScdaId ? "checked" : ""} />
@@ -1765,7 +1835,7 @@ function renderRulesTab() {
     <div class="section-title">
       <div>
         <h2>Rules Snapshot</h2>
-        <p>Built from official sources checked July 6, 2026. This is a practical checklist, not legal advice.</p>
+        <p>Built from sources checked July 6, 2026. This is a practical checklist, not legal advice; verify every requirement against current SCDA guidance before sale.</p>
       </div>
     </div>
     <div class="rules-grid">
@@ -1807,6 +1877,14 @@ function renderRulesTab() {
           <li><a href="https://www.ftc.gov/legal-library/browse/rules/fair-packaging-labeling-act-regulations-under-section-4-fair-packaging-labeling-act" target="_blank" rel="noreferrer">FTC Fair Packaging and Labeling Act summary</a></li>
           <li><a href="https://laurenscounty.us/starting-a-business" target="_blank" rel="noreferrer">Laurens County Starting a Business</a></li>
           <li><a href="https://laurenscounty.us/codes-ordinances" target="_blank" rel="noreferrer">Laurens County Code of Ordinances</a></li>
+        </ul>
+      </section>
+      <section class="source-panel">
+        <h3>Verification required</h3>
+        <ul class="source-list">
+          <li>Verify the exact disclosure wording, capitalization, placement, and contrast currently required by SCDA.</li>
+          <li>Verify recipe eligibility and any current federal, state, or local requirements for dairy, egg, fillings, toppings, and other higher-risk ingredients.</li>
+          <li>The app supports ingredient ordering, allergen identification, net weight, product information, and disclosure output; it does not certify legal compliance.</li>
         </ul>
       </section>
     </div>
@@ -2223,6 +2301,7 @@ function renderLabelPreview(recipe) {
     : label.address || "Street address or SCDA ID needed";
   const ingredients = getIngredientStatement(recipe);
   const allergens = getAllergenStatement(recipe, true);
+  const barcode = label.squareSku ? `<div class="ft-barcode">${renderBarcode(label.squareSku)}</div>` : "";
   return `
     <article class="ft-label ${label.printStyle === "color" ? "ft-color" : "ft-thermal"}">
       <div class="ft-label-content">
@@ -2244,11 +2323,61 @@ function renderLabelPreview(recipe) {
         ${label.storage ? `<p class="ft-storage">${escapeHtml(label.storage)}</p>` : ""}
         <p class="ft-disclosure">${DISCLOSURE}</p>
         <div class="ft-producer">${label.useScdaId ? `<b>HOME-BASED FOOD PRODUCTION ID</b><p>${escapeHtml(label.scdaId || "ID needed")}</p>` : escapeHtml(producerLine)}${label.contact ? `<p>${escapeHtml(label.contact)}</p>` : ""}</div>
+        ${barcode}
         ${label.scripture ? `<div class="ft-scripture"><p>${escapeHtml(label.scripture)}</p><b>${escapeHtml(label.scriptureReference || "")}</b></div>` : ""}
         <footer class="ft-footer"><b>FRESHLY BAKED IN SOUTH CAROLINA</b><em>Freshly Milled. Faithfully Made.</em></footer>
       </div>
     </article>
   `;
+}
+
+function getCode128Patterns() {
+  return [
+  "212222","222122","222221","121223","121322","131222","122213","122312","132212","221213","221312","231212","112232","122132","122231","113222","123122","123221","223211","221132","221231","213212","223112","312131","311222","321122","321221","312212","322112","322211","212123","212321","232121","111323","131123","131321","112313","132113","132311","211313","231113","231311","112133","112331","132131","113123","113321","133121","313121","211331","231131","213113","213311","213131","311123","311321","331121","312113","312311","332111","314111","221411","431111","111224","111422","121124","121421","141122","141221","112214","112412","122114","122411","142112","142211","241211","221114","413111","241112","134111","111242","121142","121241","114212","124112","124211","411212","421112","421211","212141","214121","412121","111143","111341","131141","114113","114311","411113","411311","113141","114131","311141","411131","211412","211214","211232","2331112",
+  ];
+}
+
+function code128Svg(value, className = "barcode-svg") {
+  const text = String(value || "").replace(/[^\x20-\x7e]/g, "");
+  if (!text) return "";
+  const codes = [104];
+  for (const character of text) codes.push(character.charCodeAt(0) - 32);
+  const checksum = codes.reduce((sum, code, index) => sum + code * (index || 1), 0) % 103;
+  codes.push(checksum, 106);
+  let x = 10;
+  const bars = [];
+  codes.forEach((code) => {
+    const pattern = getCode128Patterns()[code];
+    let black = true;
+    for (const width of pattern) {
+      const scaled = Number(width) * 2;
+      if (black) bars.push(`<rect x="${x}" y="4" width="${scaled}" height="42"/>`);
+      x += scaled;
+      black = !black;
+    }
+  });
+  return `<svg class="${className}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${x + 10} 64" role="img" aria-label="Code 128 barcode for ${escapeAttr(text)}"><rect width="100%" height="100%" fill="#fff"/>${bars.join("")}<text x="${(x + 10) / 2}" y="59" text-anchor="middle">${escapeHtml(text)}</text></svg>`;
+}
+
+function renderBarcode(value) {
+  return value ? code128Svg(value) : `<p class="hint">Square SKU will appear here.</p>`;
+}
+
+function downloadBarcode(recipe) {
+  const sku = recipe.label.squareSku;
+  if (!sku) {
+    showToast("Enter a Square SKU first.");
+    return;
+  }
+  const svg = code128Svg(sku);
+  const blob = new Blob([svg], { type: "image/svg+xml" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${slugify(recipe.name || "product")}-${slugify(sku)}-barcode.svg`;
+  link.click();
+  URL.revokeObjectURL(url);
+  showToast("Barcode downloaded.");
 }
 
 function fitProductLabels(root) {
@@ -2258,11 +2387,17 @@ function fitProductLabels(root) {
     label.style.zoom = preview ? Math.min(1, preview.clientWidth / 384) : 1;
     let size = 12;
     label.style.setProperty("--label-font", `${size}px`);
-    while (label.scrollHeight > label.clientHeight + 1 && size > 9) {
+    let content = label.querySelector(".ft-label-content");
+    while ((label.scrollHeight > label.clientHeight + 1 || (content && content.scrollHeight > content.clientHeight + 1)) && size > 8) {
       size -= 0.25;
       label.style.setProperty("--label-font", `${size}px`);
+      content = label.querySelector(".ft-label-content");
     }
-    if (label.scrollHeight > label.clientHeight + 1 || label.scrollWidth > label.clientWidth + 1) fits = false;
+    if (
+      label.scrollHeight > label.clientHeight + 1 ||
+      label.scrollWidth > label.clientWidth + 1 ||
+      (content && content.scrollHeight > content.clientHeight + 1)
+    ) fits = false;
   });
   const message = root.querySelector("#label-fit-message");
   if (message) message.textContent = fits ? "" : "This label is too full. Shorten the optional tagline, scripture, or storage note before printing.";
@@ -2297,6 +2432,8 @@ function getLabelText(recipe) {
     label.businessName || "Your Bakery Name",
     label.productName || recipe.name || "Bread",
     `NET WT ${round(label.netWeightOz || 0)} oz (${round(label.netWeightG || 0)} g)`,
+    label.squareSku ? `Square SKU: ${label.squareSku}` : "",
+    label.gtin ? `GTIN: ${label.gtin}` : "",
     `Ingredients: ${getIngredientStatement(recipe)}`,
     getAllergenStatement(recipe, true),
     label.storage,
@@ -2814,6 +2951,49 @@ function scaleGramValue(value, factor) {
   const scaled = Number(value || 0) * Number(factor || 1);
   if (scaled < 100) return Math.round(scaled * 10) / 10;
   return Math.round(scaled);
+}
+
+function conversionIngredient(recipe) {
+  const id = document.querySelector("#conversion-ingredient")?.value;
+  return recipe.ingredients.find((item) => item.id === id) || recipe.ingredients[0];
+}
+
+function convertCupsToWeight(recipe) {
+  const ingredient = conversionIngredient(recipe);
+  const input = document.querySelector("#conversion-cups")?.value;
+  if (!ingredient) {
+    showToast("Add an ingredient before converting.");
+    return;
+  }
+  try {
+    const result = convertToGrams(input, "cup", ingredient);
+    rememberUndo();
+    ingredient.grams = result.grams < 100 ? Math.round(result.grams * 10) / 10 : Math.round(result.grams);
+    ingredient.unit = "g";
+    syncRecipeDerivedFields(recipe);
+    persistAndRender(`${ingredient.name || "Ingredient"} converted to ${formatMeasurement(ingredient.grams, "g")}${result.estimated ? " (estimate)" : ""}.`);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function convertWeightToCups(recipe) {
+  const ingredient = conversionIngredient(recipe);
+  const value = document.querySelector("#conversion-weight")?.value;
+  const unit = document.querySelector("#conversion-weight-unit")?.value || "g";
+  const output = document.querySelector("#conversion-reverse-result");
+  if (!ingredient) {
+    showToast("Add an ingredient before converting.");
+    return;
+  }
+  try {
+    const grams = convertToGrams(value, unit, ingredient).grams;
+    const result = convertFromGrams(grams, "cup", ingredient);
+    if (output) output.textContent = `${formatMeasurement(result.amount, "cup")}${result.estimated ? " (estimate)" : ""}`;
+  } catch (error) {
+    if (output) output.textContent = "Enter a valid weight";
+    showToast(error.message);
+  }
 }
 
 function syncRecipeWeights(recipe) {
@@ -4648,6 +4828,7 @@ function normalizeRecipe(recipe) {
       ...(recipe.label || {}),
     },
   };
+  if (!normalized.label.squareSku) normalized.label.squareSku = makeSquareSku(normalized);
   if (!normalized.ingredients.length) normalized.ingredients = [newIngredient()];
   if (!recipe.label?.templateVersion) {
     if (!normalized.label.businessName || normalized.label.businessName === "Laurens Home Bakery") normalized.label.businessName = "Faithful & True Bread and Baked Goods";
@@ -4761,6 +4942,8 @@ function makeDefaultLabel() {
     address: "",
     scdaId: "30-202-00478",
     useScdaId: true,
+    squareSku: "",
+    gtin: "",
     netWeightG: 0,
     netWeightOz: 0,
     lotCode: "",
@@ -4773,6 +4956,13 @@ function makeDefaultLabel() {
     healthClaims: "",
     localReviewComplete: false,
   };
+}
+
+function makeSquareSku(recipe) {
+  const source = `${recipe.id || ""}-${recipe.name || ""}`;
+  let hash = 0;
+  for (const character of source) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return `FT-${hash.toString(36).toUpperCase().padStart(6, "0").slice(-6)}`;
 }
 
 function makeDefaultLot() {

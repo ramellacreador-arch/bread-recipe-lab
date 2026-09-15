@@ -210,6 +210,32 @@ h4 {
   box-shadow: var(--shadow);
 }
 
+.barcode-tools {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--field);
+}
+
+.barcode-preview {
+  max-width: 360px;
+  padding: 8px;
+  background: #fff;
+}
+
+.barcode-svg {
+  display: block;
+  width: 100%;
+  height: 88px;
+}
+
+.barcode-svg text {
+  font: 14px Arial, sans-serif;
+}
+
 .menu-shell {
   position: relative;
   margin-bottom: 12px;
@@ -1286,6 +1312,31 @@ tr.is-dragging {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+.conversion-panel {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.conversion-panel .section-title {
+  margin-bottom: 12px;
+}
+
+.conversion-result {
+  display: block;
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--green-dark);
+  background: var(--field);
+  font-weight: 700;
+}
+
+.conversion-reverse {
+  margin-top: 14px;
 }
 
 .quick-calc {
