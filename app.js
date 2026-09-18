@@ -244,6 +244,9 @@ document.addEventListener("click", (event) => {
     case "export-recipe-csv":
       exportRecipeCsv(recipe);
       break;
+    case "export-square-csv":
+      exportSquareCsv(recipe);
+      break;
     case "export-recipe-pdf":
       window.print();
       break;
@@ -882,6 +885,51 @@ function exportRecipeCsv(recipe) {
   URL.revokeObjectURL(url);
 }
 
+function exportSquareCsv(recipe) {
+  const itemName = recipe.name || recipe.label?.productName || "";
+  const customerName = recipe.label?.productName || itemName;
+  const variationName = recipe.label?.squareVariationName || "Regular";
+  const sku = recipe.label?.squareSku || "";
+  const description = recipe.label?.squareDescription || "";
+  const category = recipe.label?.squareCategory || "";
+  const price = Number(recipe.pricing?.sellingPrice || 0);
+
+  if (!itemName) return showToast("Enter a recipe name before Square export.");
+  if (!sku) return showToast("Assign a Square SKU before export.");
+  if (!(price > 0)) return showToast("Set a selling price before Square export.");
+
+  const headers = [
+    "Token","Item Name","Customer-facing Name","Variation Name","SKU","Description","Categories",
+    "Reporting Category","SEO Title","SEO Description","Permalink","GTIN","Square Online Item Visibility",
+    "Item Type","Weight (lb)","Social Media Link Title","Social Media Link Description","Shipping Enabled",
+    "Self-serve Ordering Enabled","Delivery Enabled","Pickup Enabled","Price","Online Sale Price","Archived",
+    "Sellable","Contains Alcohol","Stockable","Skip Detail Screen in POS","Preselect First Variation",
+    "Option Name 1","Option Value 1","Default Unit Cost","Default Vendor Name","Default Vendor Code",
+    "Current Quantity Faithful & True LLC","New Quantity Faithful & True LLC",
+    "Stock Alert Enabled Faithful & True LLC","Stock Alert Count Faithful & True LLC"
+  ];
+
+  const row = [
+    "", itemName, customerName, variationName, sku, description, category,
+    category, "", "", "", recipe.label?.gtin || "", "Visible",
+    "Prepared food and beverage", "", "", "", "N",
+    "N", "N", "N", price.toFixed(2), "", "N",
+    "Y", "N", "Y", "N", "Y",
+    "", "", "", "", "",
+    "", "", "", ""
+  ];
+
+  const csv = [headers, row].map((values) => values.map(csvCell).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${slugify(itemName)}-square-import.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+  showToast("Square import CSV exported.");
+}
+
 function csvCell(value) {
   return `"${String(value ?? "").replaceAll('"', '""')}"`;
 }
@@ -1002,7 +1050,8 @@ function renderRecipeTab(recipe) {
         </div>
         <div class="row-actions">
           <button class="ghost-button" id="duplicate-recipe" type="button" title="Duplicate recipe">Duplicate</button>
-          <button class="ghost-button" data-action="export-recipe-csv" type="button" title="Export ingredient CSV">CSV</button>
+          <button class="ghost-button" data-action="export-recipe-csv" type="button" title="Export ingredient CSV">Ingredient CSV</button>
+          <button class="secondary-button" data-action="export-square-csv" type="button" title="Export this product in the Faithful & True Square import format">Export for Square</button>
           <button class="secondary-button" data-action="export-recipe-pdf" type="button" title="Print or save recipe as PDF">PDF</button>
           <button class="danger-button" id="delete-recipe" type="button" title="Delete recipe">Delete</button>
         </div>
@@ -1735,7 +1784,14 @@ function renderLabelTab(recipe) {
             ${labelField("Best by", "date", recipe.label.bestBy, "bestBy")}
             ${labelField("Contact", "text", recipe.label.contact, "contact")}
             ${labelField("Square SKU", "text", recipe.label.squareSku, "squareSku")}
+            ${labelField("Square variation", "text", recipe.label.squareVariationName, "squareVariationName")}
+            ${labelField("Square category", "text", recipe.label.squareCategory, "squareCategory")}
             ${labelField("GTIN / UPC (optional)", "text", recipe.label.gtin, "gtin")}
+          </div>
+          ${textareaField("Square description", recipe.label.squareDescription, "squareDescription", "label")}
+          <div class="button-row">
+            <button class="primary-button" data-action="export-square-csv" type="button">Export for Square</button>
+            <span class="hint">Uses this recipe's SKU and selling price.</span>
           </div>
           <div class="barcode-tools">
             <p class="hint">Use the Square SKU for internal Square checkout. Leave GTIN blank unless you have a legitimate GS1-issued number.</p>
@@ -2776,6 +2832,7 @@ function duplicateRecipe() {
   copy.id = uid();
   copy.name = `${source.name} Copy`;
   copy.status = "Draft";
+  copy.label.squareSku = makeSquareSku(copy);
   copy.createdAt = new Date().toISOString();
   copy.updatedAt = copy.createdAt;
   copy.ingredients = copy.ingredients.map((item) => ({ ...item, id: uid() }));
@@ -4943,6 +5000,9 @@ function makeDefaultLabel() {
     scdaId: "30-202-00478",
     useScdaId: true,
     squareSku: "",
+    squareVariationName: "Regular",
+    squareCategory: "",
+    squareDescription: "",
     gtin: "",
     netWeightG: 0,
     netWeightOz: 0,
