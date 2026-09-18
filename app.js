@@ -1048,12 +1048,17 @@ function renderRecipeTab(recipe) {
           <h2>${escapeHtml(recipe.name)}</h2>
           <p>Enter the formula once. The lab keeps production math, allergens, costing, packaging, and labels in sync.</p>
         </div>
-        <div class="row-actions">
-          <button class="ghost-button" id="duplicate-recipe" type="button" title="Duplicate recipe">Duplicate</button>
-          <button class="ghost-button" data-action="export-recipe-csv" type="button" title="Export ingredient CSV">Ingredient CSV</button>
+        <div class="recipe-primary-actions">
           <button class="secondary-button" data-action="export-square-csv" type="button" title="Export this product in the Faithful & True Square import format">Export for Square</button>
-          <button class="secondary-button" data-action="export-recipe-pdf" type="button" title="Print or save recipe as PDF">PDF</button>
-          <button class="danger-button" id="delete-recipe" type="button" title="Delete recipe">Delete</button>
+          <details class="action-menu">
+            <summary class="ghost-button">More</summary>
+            <div class="action-menu-panel">
+              <button class="ghost-button" id="duplicate-recipe" type="button" title="Duplicate recipe">Duplicate recipe</button>
+              <button class="ghost-button" data-action="export-recipe-csv" type="button" title="Export ingredient CSV">Ingredient CSV</button>
+              <button class="ghost-button" data-action="export-recipe-pdf" type="button" title="Print or save recipe as PDF">Print / PDF</button>
+              <button class="danger-button" id="delete-recipe" type="button" title="Delete recipe">Delete recipe</button>
+            </div>
+          </details>
         </div>
       </header>
 
