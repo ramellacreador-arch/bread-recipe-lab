@@ -1763,6 +1763,7 @@ html[data-theme="dark"] .mini-label-preview {
   .label-actions,
   .label-controls,
   .checklist,
+  .recipe-primary-actions,
   .print-hidden {
     display: none !important;
   }
