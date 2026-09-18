@@ -2832,6 +2832,7 @@ function duplicateRecipe() {
   copy.id = uid();
   copy.name = `${source.name} Copy`;
   copy.status = "Draft";
+  copy.label.squareSku = makeSquareSku(copy);
   copy.createdAt = new Date().toISOString();
   copy.updatedAt = copy.createdAt;
   copy.ingredients = copy.ingredients.map((item) => ({ ...item, id: uid() }));
