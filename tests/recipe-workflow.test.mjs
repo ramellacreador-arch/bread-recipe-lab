@@ -98,3 +98,24 @@ test("label readiness blocks invalid source conversions", () => {
   assert.equal(result.ready, false);
   assert.equal(result.blockers.find((item) => item.title === "Valid ingredient amounts").ok, false);
 });
+
+test("label readiness blocks negative canonical gram weights", () => {
+  const recipe = {
+    name: "Country Bread",
+    ingredients: [
+      { name: "Flour", grams: 500 },
+      { name: "Salt", grams: -10 },
+    ],
+    label: {
+      businessName: "Faithful & True",
+      useScdaId: true,
+      scdaId: "SCDA-123",
+      netWeightG: 490,
+      netWeightOz: 17.3,
+    },
+  };
+
+  const result = getLabelReadiness(recipe, "Contains: Wheat");
+  assert.equal(result.ready, false);
+  assert.equal(result.blockers.find((item) => item.title === "Valid ingredient amounts").ok, false);
+});

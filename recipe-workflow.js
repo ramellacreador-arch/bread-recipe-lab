@@ -47,7 +47,10 @@ function getLabelReadiness(recipe, allergenStatement = "") {
     requirement("Producer identity", Boolean(label.businessName && ((label.useScdaId && label.scdaId) || (!label.useScdaId && label.address))), "Enter the producer name plus SCDA identification number or full address."),
     requirement("Standard product name", Boolean(label.productName || recipe.name), "Enter the product's standard name."),
     requirement("Ingredients by weight", weightedIngredients.length > 0 && weightedIngredients.every((item) => String(item.label || item.name || "").trim()), "Add a name or label to every ingredient with a positive canonical gram weight."),
-    requirement("Valid ingredient amounts", ingredients.every((item) => !item.conversionError && Number.isFinite(Number(item.grams))), "Correct invalid ingredient amounts before printing."),
+    requirement("Valid ingredient amounts", ingredients.every((item) => {
+      const grams = Number(item.grams);
+      return !item.conversionError && Number.isFinite(grams) && grams >= 0;
+    }), "Correct invalid ingredient amounts before printing."),
     requirement("Net quantity", Number(label.netWeightG) > 0 && Number(label.netWeightOz) > 0, "Enter net quantity in grams and ounces."),
     requirement("Allergen declaration", Boolean(allergenStatement) || label.allergenConfirmedNone, "Declare detected major allergens, or confirm that none are present."),
     requirement("Required disclosure", true, "The exact current SCDA disclosure is included."),
