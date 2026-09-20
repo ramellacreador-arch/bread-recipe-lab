@@ -2,6 +2,10 @@
   "name": "faithful-true-bread-lab",
   "private": true,
   "type": "module",
-  "scripts": { "build": "node build.mjs", "db:generate": "drizzle-kit generate" },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "db:generate": "drizzle-kit generate"
+  },
   "devDependencies": { "drizzle-kit": "0.31.4", "drizzle-orm": "0.44.5" }
 }
