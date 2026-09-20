@@ -114,6 +114,7 @@ if (window.BREAD_CLOUD) {
 } else render();
 setInterval(() => saveState("Auto-saved"), 5000);
 window.addEventListener("resize", () => fitProductLabels(document));
+window.addEventListener("beforeprint", handleBeforePrint);
 
 document.addEventListener("click", (event) => {
   const target = event.target.closest("button");
@@ -1884,7 +1885,7 @@ function renderOrderPreview(draft) {
 }
 
 function renderLabelTab(recipe) {
-  const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
+  const readiness = getRecipeLabelReadiness(recipe);
   return `
     ${renderProductionWorkflow(recipe, "label")}
     <div class="section-title">
@@ -1965,6 +1966,7 @@ function renderLabelTab(recipe) {
 
       <section class="label-panel">
         <p class="hint">4 x 6 in portrait · FT-LBL-002</p>
+        <div id="label-print-guard" class="label-print-guard${readiness.ready ? "" : " is-visible"}">${renderLabelPrintGuard(readiness)}</div>
         <div id="label-preview" class="label-preview"></div>
         <p id="label-fit-message" class="hint" role="status"></p>
       </section>
@@ -2450,27 +2452,7 @@ function updateComputedViews() {
   document.querySelectorAll(".mini-label-preview").forEach((node) => { node.innerHTML = renderLabelPreview(recipe); });
   fitProductLabels(document);
 
-  const checklist = document.querySelector("#label-checklist");
-  if (checklist) {
-    const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
-    checklist.innerHTML = renderReadinessChecklist(readiness);
-  }
-  const printButton = document.querySelector("#print-label");
-  if (printButton) {
-    const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
-    printButton.disabled = !readiness.ready;
-    printButton.title = readiness.ready ? "Print product labels" : "Complete all blocking label requirements before printing.";
-  }
-  const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
-  const readinessCopy = document.querySelector(".readiness-heading p");
-  const readinessPill = document.querySelector(".readiness-heading .status-pill");
-  if (readinessCopy) readinessCopy.textContent = readiness.ready
-    ? "Required label information is present."
-    : `${readiness.blockers.filter((item) => !item.ok).length} blocking requirement(s) remain.`;
-  if (readinessPill) {
-    readinessPill.className = `status-pill ${readiness.ready ? "ready" : "not-ready"}`;
-    readinessPill.textContent = readiness.ready ? "Ready to print" : "Not ready";
-  }
+  updateLabelReadinessState(recipe);
   const skuStatus = document.querySelector("#sku-status");
   if (skuStatus) skuStatus.textContent = getSkuStatus(recipe);
 }
@@ -2564,6 +2546,18 @@ function renderLabelPreview(recipe) {
   `;
 }
 
+function renderLabelPrintGuard(readiness) {
+  const blockers = readiness.blockers.filter((item) => !item.ok);
+  if (!blockers.length) return "";
+  return `
+    <h3>Label printing blocked</h3>
+    <p>Complete these blocking requirements before printing:</p>
+    <ul>
+      ${blockers.map((item) => `<li><strong>${escapeHtml(item.title)}:</strong> ${escapeHtml(item.copy)}</li>`).join("")}
+    </ul>
+  `;
+}
+
 function getCode128Patterns() {
   return [
   "212222","222122","222221","121223","121322","131222","122213","122312","132212","221213","221312","231212","112232","122132","122231","113222","123122","123221","223211","221132","221231","213212","223112","312131","311222","321122","321221","312212","322112","322211","212123","212321","232121","111323","131123","131321","112313","132113","132311","211313","231113","231311","112133","112331","132131","113123","113321","133121","313121","211331","231131","213113","213311","213131","311123","311321","331121","312113","312311","332111","314111","221411","431111","111224","111422","121124","121421","141122","141221","112214","112412","122114","122411","142112","142211","241211","221114","413111","241112","134111","111242","121142","121241","114212","124112","124211","411212","421112","421211","212141","214121","412121","111143","111341","131141","114113","114311","411113","411311","113141","114131","311141","411131","211412","211214","211232","2331112",
@@ -2638,7 +2632,7 @@ function fitProductLabels(root) {
 }
 
 function printProductLabel(recipe) {
-  const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
+  const readiness = getRecipeLabelReadiness(recipe);
   if (!readiness.ready) {
     showToast("Complete all blocking label requirements before printing.");
     document.querySelector("#label-readiness")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2663,6 +2657,48 @@ function printProductLabel(recipe) {
   };
   frame.srcdoc = `<!doctype html><html><head><base href="${escapeHtml(new URL(".", location.href).href)}"><link rel="stylesheet" href="label-design.css"><title>${escapeHtml(recipe.label.productName || recipe.name)}</title></head><body class="ft-print">${renderLabelPreview(recipe)}</body></html>`;
   document.body.appendChild(frame);
+}
+
+function getRecipeLabelReadiness(recipe) {
+  return getLabelReadiness(recipe, getAllergenStatement(recipe, true));
+}
+
+function updateLabelReadinessState(recipe = getActiveRecipe(), readiness = getRecipeLabelReadiness(recipe)) {
+  const checklist = document.querySelector("#label-checklist");
+  if (checklist) checklist.innerHTML = renderReadinessChecklist(readiness);
+
+  const printButton = document.querySelector("#print-label");
+  if (printButton) {
+    printButton.disabled = !readiness.ready;
+    printButton.title = readiness.ready ? "Print product labels" : "Complete all blocking label requirements before printing.";
+  }
+
+  const readinessCopy = document.querySelector(".readiness-heading p");
+  const readinessPill = document.querySelector(".readiness-heading .status-pill");
+  if (readinessCopy) readinessCopy.textContent = readiness.ready
+    ? "Required label information is present."
+    : `${readiness.blockers.filter((item) => !item.ok).length} blocking requirement(s) remain.`;
+  if (readinessPill) {
+    readinessPill.className = `status-pill ${readiness.ready ? "ready" : "not-ready"}`;
+    readinessPill.textContent = readiness.ready ? "Ready to print" : "Not ready";
+  }
+
+  const printGuard = document.querySelector("#label-print-guard");
+  if (printGuard) {
+    printGuard.innerHTML = renderLabelPrintGuard(readiness);
+    printGuard.classList.toggle("is-visible", !readiness.ready);
+  }
+
+  document.body.dataset.labelPrintBlocked = activeTab === "label" && !readiness.ready ? "true" : "false";
+  return readiness;
+}
+
+function handleBeforePrint() {
+  if (activeTab !== "label") {
+    document.body.dataset.labelPrintBlocked = "false";
+    return;
+  }
+  updateLabelReadinessState(getActiveRecipe());
 }
 
 function getLabelText(recipe) {
