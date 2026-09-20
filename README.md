@@ -9,8 +9,16 @@ The label generator is based on official South Carolina, FDA, FTC, and Laurens
 County sources checked July 6, 2026. It is a practical checklist, not legal
 advice. Confirm final sale eligibility with SCDA and your local jurisdiction.
 
-Ingredient conversions use ingredient-specific estimated grams-per-cup values
-for common bread ingredients. Recipe weights remain canonical in grams; verify
-volume estimates with a scale before production or labeling. The Rules Snapshot
-identifies label fields the app can generate and items that must be verified
-against current South Carolina Department of Agriculture guidance.
+Ingredient entry accepts cups, tablespoons, teaspoons, grams, kilograms, and
+ounces, including decimal, fraction, and mixed-number amounts. The original
+amount and unit remain visible while all recipe math and label ordering use
+canonical grams. Verify density estimates with a scale before production.
+
+The guided Recipe workflow covers entry, saving, adjustment, Square catalog
+export, and label readiness. Square CSV exports include Item Name, Variation
+Name, Description, SKU, and Price. Start with the latest template from your own
+Square Dashboard and match columns during import.
+
+Printing stays disabled until required South Carolina label information is
+present. The checklist is a preparation aid, not legal advice; the operator
+remains responsible for confirming current SCDA and local requirements.

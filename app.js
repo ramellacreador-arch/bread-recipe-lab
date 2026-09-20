@@ -1,4 +1,5 @@
 import { convertFromGrams, convertToGrams, formatMeasurement } from "./conversion.js";
+import { buildSquareCsv, generateSku, getLabelReadiness, isSkuUnique, normalizeSku } from "./recipe-workflow.js";
 
 const STORAGE_KEY = "bread-recipe-lab-v1";
 const RECIPE_SEED_KEY = "bread-recipe-lab-seeds-v1";
@@ -139,6 +140,29 @@ document.addEventListener("click", (event) => {
     case "manual-save":
       saveState("Saved");
       showToast(window.BREAD_CLOUD ? "Check the sync status for your latest save." : "Saved.");
+      updateComputedViews();
+      break;
+    case "generate-sku":
+      rememberUndo();
+      recipe.catalog.sku = generateSku(recipe, state.recipes);
+      persistAndRender(`SKU ${recipe.catalog.sku} generated.`);
+      break;
+    case "workflow-save":
+      saveState("Saved");
+      showToast("Recipe saved.");
+      updateComputedViews();
+      break;
+    case "workflow-enter":
+    case "workflow-adjust":
+    case "workflow-square":
+      activeTab = "recipe";
+      render();
+      requestAnimationFrame(() => focusWorkflowTarget(action));
+      break;
+    case "workflow-label":
+      activeTab = "label";
+      render();
+      requestAnimationFrame(() => document.querySelector("#label-readiness")?.scrollIntoView({ behavior: "smooth", block: "start" }));
       break;
     case "undo-action":
       undoChange();
@@ -383,9 +407,21 @@ function handleFieldChange(element) {
   rememberUndo();
 
   if (element.dataset.bind) {
+    const oldSellingPrice = Number(recipe.pricing?.sellingPrice || 0);
     setDeepValue(recipe, element.dataset.bind, value);
     if (element.dataset.bind === "productType") recipe.productTypeLocked = true;
     shouldSyncDerivedFields = ["name", "yieldCount", "pricing.sellingPrice"].includes(element.dataset.bind);
+    if (element.dataset.bind === "catalog.sku") {
+      recipe.catalog.sku = normalizeSku(value);
+      element.value = recipe.catalog.sku;
+      const unique = isSkuUnique(recipe.catalog.sku, state.recipes, recipe.id);
+      element.setCustomValidity(unique ? "" : "SKU must be unique across saved recipes.");
+      element.setAttribute("aria-invalid", String(!unique));
+    }
+    if (element.dataset.bind === "pricing.sellingPrice" && (!recipe.catalog.price || Number(recipe.catalog.price) === oldSellingPrice)) {
+      recipe.catalog.price = Number(value || 0);
+    }
+    if (element.dataset.bind === "catalog.price") recipe.pricing.sellingPrice = Number(value || 0);
   }
 
   if (element.dataset.ingredientField) {
@@ -394,6 +430,16 @@ function handleFieldChange(element) {
       const beforeIngredient = previousIngredients.find((ingredient) => ingredient.id === item.id) || snapshotIngredientReference(item);
       item[element.dataset.ingredientField] = value;
       if (element.dataset.ingredientField === "name") applyIngredientSuggestion(item);
+      if (["sourceAmount", "sourceUnit", "name"].includes(element.dataset.ingredientField)) {
+        updateIngredientConversion(item);
+      }
+      if (element.dataset.ingredientField === "grams") {
+        item.sourceAmount = String(value);
+        item.sourceUnit = "g";
+        item.conversionEstimated = false;
+        item.conversionEstimateReason = "";
+        item.conversionError = "";
+      }
       if (shouldSyncIngredientReferences(element.dataset.ingredientField)) {
         syncIngredientReferencesInRecipeText(recipe, beforeIngredient, item, previousIngredients);
         shouldRefreshSyncedTextFields = true;
@@ -454,7 +500,7 @@ function snapshotIngredientReference(ingredient) {
 }
 
 function shouldSyncIngredientReferences(fieldName) {
-  return ["name", "label", "grams", "unit"].includes(fieldName);
+  return ["name", "label", "grams", "sourceAmount", "sourceUnit"].includes(fieldName);
 }
 
 function syncAllIngredientReferencesInRecipeText(recipe, previousIngredients) {
@@ -749,7 +795,15 @@ function handleKeyboardShortcuts(event) {
   }
   if (isCommand && event.key.toLowerCase() === "p") {
     event.preventDefault();
-    window.print();
+    if (activeTab === "label") printProductLabel(getActiveRecipe());
+    else window.print();
+    return;
+  }
+  if (event.key === "Enter" && event.target.matches("#conversion-cups, #conversion-weight")) {
+    event.preventDefault();
+    const recipe = getActiveRecipe();
+    if (event.target.id === "conversion-cups") convertCupsToWeight(recipe);
+    else convertWeightToCups(recipe);
     return;
   }
   if (event.key === "Enter" && event.target.closest(".ingredient-sheet")) {
@@ -843,6 +897,38 @@ function applyIngredientSuggestion(item) {
   if (!Number(item.costPerKg || 0)) item.costPerKg = found.costPerKg;
 }
 
+function updateIngredientConversion(item) {
+  try {
+    const result = convertToGrams(item.sourceAmount, item.sourceUnit, item);
+    item.grams = result.grams < 100 ? Math.round(result.grams * 10) / 10 : Math.round(result.grams);
+    item.conversionEstimated = result.estimated;
+    item.conversionEstimateReason = result.estimateReason || "";
+    item.conversionError = "";
+  } catch (error) {
+    item.grams = NaN;
+    item.conversionEstimated = false;
+    item.conversionEstimateReason = "";
+    item.conversionError = error.message;
+  }
+}
+
+function syncIngredientSourceFromGrams(item) {
+  try {
+    const result = convertFromGrams(item.grams, item.sourceUnit || "g", item);
+    item.sourceAmount = formatSourceAmount(result.amount);
+    item.sourceUnit = result.unit;
+    item.conversionEstimated = result.estimated;
+    item.conversionEstimateReason = result.estimateReason || "";
+    item.conversionError = "";
+  } catch {
+    item.sourceAmount = formatSourceAmount(Number(item.grams));
+    item.sourceUnit = "g";
+    item.conversionEstimated = false;
+    item.conversionEstimateReason = "";
+    item.conversionError = "";
+  }
+}
+
 function filterIngredientRows(query) {
   const needle = String(query || "").trim().toLowerCase();
   document.querySelectorAll("[data-ingredient-row]").forEach((row) => {
@@ -860,14 +946,15 @@ function toggleManualAllergen(recipe, allergen, checked) {
 
 function exportRecipeCsv(recipe) {
   const rows = [
-    ["Ingredient", "Weight", "Unit", "Baker %", "Cost per kg", "Line cost", "Notes"],
+    ["Ingredient", "Source amount", "Source unit", "Canonical grams", "Baker %", "Cost per kg", "Line cost", "Notes"],
     ...recipe.ingredients.map((ingredient) => {
       const metrics = getMetrics(recipe);
       const bakerPercent = metrics.flour ? (Number(ingredient.grams || 0) / metrics.flour) * 100 : 0;
       return [
         ingredient.name,
+        ingredient.sourceAmount,
+        ingredient.sourceUnit || "g",
         ingredient.grams,
-        ingredient.unit || "g",
         round(bakerPercent),
         ingredient.costPerKg || 0,
         roundMoney(getIngredientCost(ingredient)),
@@ -887,39 +974,14 @@ function exportRecipeCsv(recipe) {
 
 function exportSquareCsv(recipe) {
   const itemName = recipe.name || recipe.label?.productName || "";
-  const customerName = recipe.label?.productName || itemName;
-  const variationName = recipe.label?.squareVariationName || "Regular";
-  const sku = recipe.label?.squareSku || "";
-  const description = recipe.label?.squareDescription || "";
-  const category = recipe.label?.squareCategory || "";
-  const price = Number(recipe.pricing?.sellingPrice || 0);
+  const sku = recipe.catalog?.sku || "";
+  const price = Number(recipe.catalog?.price ?? recipe.pricing?.sellingPrice ?? 0);
 
   if (!itemName) return showToast("Enter a recipe name before Square export.");
   if (!sku) return showToast("Assign a Square SKU before export.");
+  if (!isSkuUnique(sku, state.recipes, recipe.id)) return showToast("This SKU is already used by another recipe. Generate or enter a unique SKU.");
   if (!(price > 0)) return showToast("Set a selling price before Square export.");
-
-  const headers = [
-    "Token","Item Name","Customer-facing Name","Variation Name","SKU","Description","Categories",
-    "Reporting Category","SEO Title","SEO Description","Permalink","GTIN","Square Online Item Visibility",
-    "Item Type","Weight (lb)","Social Media Link Title","Social Media Link Description","Shipping Enabled",
-    "Self-serve Ordering Enabled","Delivery Enabled","Pickup Enabled","Price","Online Sale Price","Archived",
-    "Sellable","Contains Alcohol","Stockable","Skip Detail Screen in POS","Preselect First Variation",
-    "Option Name 1","Option Value 1","Default Unit Cost","Default Vendor Name","Default Vendor Code",
-    "Current Quantity Faithful & True LLC","New Quantity Faithful & True LLC",
-    "Stock Alert Enabled Faithful & True LLC","Stock Alert Count Faithful & True LLC"
-  ];
-
-  const row = [
-    "", itemName, customerName, variationName, sku, description, category,
-    category, "", "", "", recipe.label?.gtin || "", "Visible",
-    "Prepared food and beverage", "", "", "", "N",
-    "N", "N", "N", price.toFixed(2), "", "N",
-    "Y", "N", "Y", "N", "Y",
-    "", "", "", "", "",
-    "", "", "", ""
-  ];
-
-  const csv = [headers, row].map((values) => values.map(csvCell).join(",")).join("\n");
+  const csv = buildSquareCsv(recipe);
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1042,6 +1104,7 @@ function renderRecipeTab(recipe) {
     </datalist>
 
     <div class="recipe-dashboard">
+      ${renderProductionWorkflow(recipe, "recipe")}
       <header class="recipe-hero">
         <div>
           <p class="eyebrow">Master recipe database</p>
@@ -1049,7 +1112,7 @@ function renderRecipeTab(recipe) {
           <p>Enter the formula once. The lab keeps production math, allergens, costing, packaging, and labels in sync.</p>
         </div>
         <div class="recipe-primary-actions">
-          <button class="secondary-button" data-action="export-square-csv" type="button" title="Export this product in the Faithful & True Square import format">Export for Square</button>
+          <button class="secondary-button" data-action="export-square-csv" type="button" title="Download required Square catalog columns for template import">Export for Square</button>
           <details class="action-menu">
             <summary class="ghost-button">More</summary>
             <div class="action-menu-panel">
@@ -1102,8 +1165,9 @@ function renderRecipeTab(recipe) {
                   <tr>
                     <th aria-label="Reorder"></th>
                     <th>Ingredient</th>
-                    <th>Weight</th>
-                    <th>Unit</th>
+                    <th>Source amount</th>
+                    <th>Source unit</th>
+                    <th>Canonical grams</th>
                     <th>Baker %</th>
                     <th>Cost/kg</th>
                     <th>Line Cost</th>
@@ -1166,7 +1230,7 @@ function renderRecipeTab(recipe) {
                 </div>
                 <div class="field">
                   <label>Weight output</label>
-                  <output id="conversion-result" class="conversion-result">Enter a cup amount</output>
+                  <output id="conversion-result" class="conversion-result" for="conversion-ingredient conversion-cups" aria-live="polite">Enter a cup amount</output>
                 </div>
               </div>
               <button class="secondary-button" id="convert-cups-to-weight" type="button">Convert cups to grams</button>
@@ -1181,7 +1245,7 @@ function renderRecipeTab(recipe) {
                 </div>
                 <div class="field">
                   <label>Volume output</label>
-                  <output id="conversion-reverse-result" class="conversion-result">Enter a weight</output>
+                  <output id="conversion-reverse-result" class="conversion-result" for="conversion-ingredient conversion-weight conversion-weight-unit" aria-live="polite">Enter a weight</output>
                 </div>
               </div>
               <button class="ghost-button" id="convert-weight-to-cups" type="button">Convert weight to cups</button>
@@ -1223,9 +1287,31 @@ function renderRecipeTab(recipe) {
             </dl>
           </details>
 
-          <details class="workflow-card" id="packaging" open>
+          <details class="workflow-card" id="square-catalog" open>
             <summary>
               <span>6</span>
+              <div>
+                <strong>Square Catalog</strong>
+                <small>Unique SKU, product description, price, and CSV export</small>
+              </div>
+            </summary>
+            <div class="form-grid compact">
+              ${field("SKU", "text", recipe.catalog.sku, "catalog.sku")}
+              ${field("Variation name", "text", recipe.catalog.variationName, "catalog.variationName")}
+              ${field("Selling price", "number", recipe.catalog.price, "catalog.price")}
+            </div>
+            ${textareaField("Description", recipe.catalog.description, "catalog.description")}
+            <div class="button-row">
+              <button class="secondary-button" id="generate-sku" type="button">Generate unique SKU</button>
+              <button class="primary-button" data-action="export-square-csv" type="button">Download Square CSV</button>
+            </div>
+            <p class="hint" id="sku-status" role="status" aria-live="polite">${escapeHtml(getSkuStatus(recipe))}</p>
+            <p class="hint">Square recommends starting with the latest catalog template exported from your own Square Dashboard. Match these columns during import; enabled-location fields may also be required for multi-location catalogs.</p>
+          </details>
+
+          <details class="workflow-card" id="packaging" open>
+            <summary>
+              <span>7</span>
               <div>
                 <strong>Packaging</strong>
                 <small>Label preview, shelf life, storage, and selling notes</small>
@@ -1327,6 +1413,45 @@ function renderProcessMethodCard(recipe, metrics, stepNumber) {
 
 function workflowPill(label, targetId) {
   return `<a href="#${targetId}">${label}</a>`;
+}
+
+function renderProductionWorkflow(recipe, currentTab) {
+  const metrics = getMetrics(recipe);
+  const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
+  const steps = [
+    ["Enter", "workflow-enter", Boolean(recipe.name && recipe.ingredients.some((item) => Number(item.grams) > 0))],
+    ["Save", "workflow-save", Boolean(recipe.updatedAt)],
+    ["Adjust", "workflow-adjust", metrics.totalWeight > 0 && Number(recipe.yieldCount) > 0],
+    ["Square", "workflow-square", Boolean(recipe.catalog.sku && isSkuUnique(recipe.catalog.sku, state.recipes, recipe.id) && Number(recipe.catalog.price) > 0)],
+    ["Label", "workflow-label", readiness.ready],
+  ];
+  return `
+    <nav class="production-workflow" aria-label="Recipe production workflow">
+      <p>Production workflow</p>
+      <ol>
+        ${steps.map(([label, action, complete]) => `
+          <li class="${complete ? "is-complete" : ""}">
+            <button type="button" data-action="${action}" ${currentTab === "label" && action === "workflow-label" ? 'aria-current="step"' : ""}>
+              <span aria-hidden="true">${complete ? "✓" : steps.findIndex((step) => step[0] === label) + 1}</span>
+              ${label}
+            </button>
+          </li>
+        `).join("")}
+      </ol>
+    </nav>
+  `;
+}
+
+function focusWorkflowTarget(action) {
+  const selector = {
+    "workflow-enter": '[data-bind="name"]',
+    "workflow-adjust": "#calculations",
+    "workflow-square": "#square-catalog",
+  }[action];
+  const target = document.querySelector(selector);
+  target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (target?.matches("input, button, select, textarea")) target.focus();
+  else target?.querySelector("input, button, select, textarea")?.focus();
 }
 
 function quickCalc(label, value) {
@@ -1759,7 +1884,9 @@ function renderOrderPreview(draft) {
 }
 
 function renderLabelTab(recipe) {
+  const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
   return `
+    ${renderProductionWorkflow(recipe, "label")}
     <div class="section-title">
       <div>
         <h2>Product Label</h2>
@@ -1768,7 +1895,7 @@ function renderLabelTab(recipe) {
       <div class="row-actions">
         <button class="ghost-button" id="mark-final" type="button">Mark Final</button>
         <button class="secondary-button" id="copy-label" type="button">Copy Text</button>
-        <button class="primary-button" id="print-label" type="button">Print Label</button>
+        <button class="primary-button" id="print-label" type="button" ${readiness.ready ? "" : "disabled"}>Print Labels</button>
       </div>
     </div>
 
@@ -1788,19 +1915,11 @@ function renderLabelTab(recipe) {
             ${labelField("Packaged on", "date", recipe.label.packageDate, "packageDate")}
             ${labelField("Best by", "date", recipe.label.bestBy, "bestBy")}
             ${labelField("Contact", "text", recipe.label.contact, "contact")}
-            ${labelField("Square SKU", "text", recipe.label.squareSku, "squareSku")}
-            ${labelField("Square variation", "text", recipe.label.squareVariationName, "squareVariationName")}
-            ${labelField("Square category", "text", recipe.label.squareCategory, "squareCategory")}
             ${labelField("GTIN / UPC (optional)", "text", recipe.label.gtin, "gtin")}
           </div>
-          ${textareaField("Square description", recipe.label.squareDescription, "squareDescription", "label")}
-          <div class="button-row">
-            <button class="primary-button" data-action="export-square-csv" type="button">Export for Square</button>
-            <span class="hint">Uses this recipe's SKU and selling price.</span>
-          </div>
           <div class="barcode-tools">
-            <p class="hint">Use the Square SKU for internal Square checkout. Leave GTIN blank unless you have a legitimate GS1-issued number.</p>
-            <div class="barcode-preview">${renderBarcode(recipe.label.squareSku)}</div>
+            <p class="hint">The barcode uses the recipe's Square SKU. Leave GTIN blank unless you have a legitimate GS1-issued number.</p>
+            <div class="barcode-preview">${renderBarcode(recipe.catalog.sku)}</div>
             <button class="ghost-button" id="download-barcode" type="button">Download Code 128 barcode</button>
           </div>
           <label class="checkbox-row">
@@ -1810,6 +1929,10 @@ function renderLabelTab(recipe) {
           <label class="checkbox-row">
             <input type="checkbox" data-label-field="localReviewComplete" ${recipe.label.localReviewComplete ? "checked" : ""} />
             Local city or county requirements checked
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" data-label-field="allergenConfirmedNone" ${recipe.label.allergenConfirmedNone ? "checked" : ""} />
+            I reviewed the formula and no major allergens are present
           </label>
           <div class="form-grid two">
             ${selectLabelField("Allergen statement", recipe.label.allergenMode, "allergenMode", [
@@ -1827,9 +1950,16 @@ function renderLabelTab(recipe) {
           ${labelField("Scripture reference", "text", recipe.label.scriptureReference, "scriptureReference")}
         </section>
 
-        <section class="section-band">
-          <h3>Compliance Checks</h3>
-          <div id="label-checklist" class="checklist"></div>
+        <section class="section-band" id="label-readiness">
+          <div class="readiness-heading">
+            <div>
+              <h3>Label Readiness</h3>
+              <p>${readiness.ready ? "Required label information is present." : `${readiness.blockers.filter((item) => !item.ok).length} blocking requirement(s) remain.`}</p>
+            </div>
+            <span class="status-pill ${readiness.ready ? "ready" : "not-ready"}">${readiness.ready ? "Ready to print" : "Not ready"}</span>
+          </div>
+          <div id="label-checklist" class="checklist">${renderReadinessChecklist(readiness)}</div>
+          <p class="hint">Preparation aid only. Final label accuracy and legal compliance remain the operator's responsibility.</p>
         </section>
       </div>
 
@@ -1954,6 +2084,8 @@ function renderRulesTab() {
 
 function renderIngredientRow(item) {
   const searchText = `${item.name} ${item.label} ${item.role} ${item.allergens} ${item.notes || ""}`.toLowerCase();
+  const conversionClass = item.conversionError ? "is-error" : item.conversionEstimated ? "is-estimate" : "is-exact";
+  const conversionText = item.conversionError || (item.conversionEstimated ? "Estimated density - verify with a scale" : "Converted to canonical grams");
   return `
     <tr draggable="true" data-ingredient-row="${item.id}" data-search-text="${escapeAttr(searchText)}">
       <td><span class="drag-handle" title="Drag to reorder">::</span></td>
@@ -1967,11 +2099,16 @@ function renderIngredientRow(item) {
         </select>
         <input class="sub-input" type="text" value="${escapeAttr(item.allergens)}" placeholder="Allergens" data-ingredient-id="${item.id}" data-ingredient-field="allergens" />
       </td>
-      <td><input class="compact-number" type="number" min="0" step="1" value="${item.grams}" data-ingredient-id="${item.id}" data-ingredient-field="grams" /></td>
+      <td><input class="source-amount" type="text" inputmode="decimal" aria-label="${escapeAttr(item.name || "Ingredient")} source amount" value="${escapeAttr(item.sourceAmount)}" data-ingredient-id="${item.id}" data-ingredient-field="sourceAmount" /></td>
       <td>
-        <select data-ingredient-id="${item.id}" data-ingredient-field="unit">
-          ${["g", "kg", "oz", "lb", "each", "tsp", "tbsp", "cup"].map((unit) => `<option value="${unit}" ${unit === (item.unit || "g") ? "selected" : ""}>${unit}</option>`).join("")}
+        <select aria-label="${escapeAttr(item.name || "Ingredient")} source unit" data-ingredient-id="${item.id}" data-ingredient-field="sourceUnit">
+          ${["cup", "tbsp", "tsp", "g", "kg", "oz"].map((unit) => `<option value="${unit}" ${unit === (item.sourceUnit || "g") ? "selected" : ""}>${unit}</option>`).join("")}
         </select>
+      </td>
+      <td class="canonical-weight">
+        <label class="sr-only" for="grams-${item.id}">${escapeHtml(item.name || "Ingredient")} canonical grams</label>
+        <input id="grams-${item.id}" class="compact-number" type="number" min="0" step="0.1" value="${round(item.grams)}" data-ingredient-id="${item.id}" data-ingredient-field="grams" />
+        <small class="conversion-status ${conversionClass}" data-conversion-status="${item.id}" role="status">${escapeHtml(conversionText)}</small>
       </td>
       <td class="percent-cell" data-baker-percent="${item.id}">0%</td>
       <td><input class="compact-number" type="number" min="0" step="0.01" value="${escapeAttr(item.costPerKg || 0)}" data-ingredient-id="${item.id}" data-ingredient-field="costPerKg" /></td>
@@ -2244,6 +2381,22 @@ function updateComputedViews() {
     cell.textContent = formatMoney(getIngredientCost(item));
   });
 
+  document.querySelectorAll("[data-conversion-status]").forEach((node) => {
+    const item = recipe.ingredients.find((ingredient) => ingredient.id === node.dataset.conversionStatus);
+    if (!item) return;
+    node.className = `conversion-status ${item.conversionError ? "is-error" : item.conversionEstimated ? "is-estimate" : "is-exact"}`;
+    node.textContent = item.conversionError || (item.conversionEstimated ? "Estimated density - verify with a scale" : "Converted to canonical grams");
+    const gramsInput = node.parentElement?.querySelector('[data-ingredient-field="grams"]');
+    if (gramsInput && document.activeElement !== gramsInput) gramsInput.value = round(item.grams);
+    const sourceInput = node.closest("tr")?.querySelector('[data-ingredient-field="sourceAmount"]');
+    if (sourceInput) {
+      sourceInput.setAttribute("aria-invalid", String(Boolean(item.conversionError)));
+      if (document.activeElement !== sourceInput) sourceInput.value = item.sourceAmount;
+    }
+    const sourceUnit = node.closest("tr")?.querySelector('[data-ingredient-field="sourceUnit"]');
+    if (sourceUnit && document.activeElement !== sourceUnit) sourceUnit.value = item.sourceUnit;
+  });
+
   const summary = document.querySelector("#formula-summary");
   if (summary) {
     summary.innerHTML = `
@@ -2299,8 +2452,27 @@ function updateComputedViews() {
 
   const checklist = document.querySelector("#label-checklist");
   if (checklist) {
-    checklist.innerHTML = getComplianceChecks(recipe).map(renderCheck).join("");
+    const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
+    checklist.innerHTML = renderReadinessChecklist(readiness);
   }
+  const printButton = document.querySelector("#print-label");
+  if (printButton) {
+    const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
+    printButton.disabled = !readiness.ready;
+    printButton.title = readiness.ready ? "Print product labels" : "Complete all blocking label requirements before printing.";
+  }
+  const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
+  const readinessCopy = document.querySelector(".readiness-heading p");
+  const readinessPill = document.querySelector(".readiness-heading .status-pill");
+  if (readinessCopy) readinessCopy.textContent = readiness.ready
+    ? "Required label information is present."
+    : `${readiness.blockers.filter((item) => !item.ok).length} blocking requirement(s) remain.`;
+  if (readinessPill) {
+    readinessPill.className = `status-pill ${readiness.ready ? "ready" : "not-ready"}`;
+    readinessPill.textContent = readiness.ready ? "Ready to print" : "Not ready";
+  }
+  const skuStatus = document.querySelector("#sku-status");
+  if (skuStatus) skuStatus.textContent = getSkuStatus(recipe);
 }
 
 function syncVisibleDerivedControls(recipe) {
@@ -2362,7 +2534,7 @@ function renderLabelPreview(recipe) {
     : label.address || "Street address or SCDA ID needed";
   const ingredients = getIngredientStatement(recipe);
   const allergens = getAllergenStatement(recipe, true);
-  const barcode = label.squareSku ? `<div class="ft-barcode">${renderBarcode(label.squareSku)}</div>` : "";
+  const barcode = recipe.catalog?.sku ? `<div class="ft-barcode">${renderBarcode(recipe.catalog.sku)}</div>` : "";
   return `
     <article class="ft-label ${label.printStyle === "color" ? "ft-color" : "ft-thermal"}">
       <div class="ft-label-content">
@@ -2425,7 +2597,7 @@ function renderBarcode(value) {
 }
 
 function downloadBarcode(recipe) {
-  const sku = recipe.label.squareSku;
+  const sku = recipe.catalog.sku;
   if (!sku) {
     showToast("Enter a Square SKU first.");
     return;
@@ -2466,6 +2638,12 @@ function fitProductLabels(root) {
 }
 
 function printProductLabel(recipe) {
+  const readiness = getLabelReadiness(recipe, getAllergenStatement(recipe, true));
+  if (!readiness.ready) {
+    showToast("Complete all blocking label requirements before printing.");
+    document.querySelector("#label-readiness")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   document.querySelector("#label-print-frame")?.remove();
   const frame = document.createElement("iframe");
   frame.id = "label-print-frame";
@@ -2493,7 +2671,7 @@ function getLabelText(recipe) {
     label.businessName || "Your Bakery Name",
     label.productName || recipe.name || "Bread",
     `NET WT ${round(label.netWeightOz || 0)} oz (${round(label.netWeightG || 0)} g)`,
-    label.squareSku ? `Square SKU: ${label.squareSku}` : "",
+    recipe.catalog?.sku ? `Square SKU: ${recipe.catalog.sku}` : "",
     label.gtin ? `GTIN: ${label.gtin}` : "",
     `Ingredients: ${getIngredientStatement(recipe)}`,
     getAllergenStatement(recipe, true),
@@ -2550,39 +2728,17 @@ function getAllergenStatement(recipe, withPrefix) {
       const uniqueNuts = [...new Set(nutMatches.map((nut) => nut.replace(/s$/, "")))];
       detected.set("tree nuts", `Tree nuts (${uniqueNuts.join(", ")})`);
     }
+    const fishMatches = ["salmon", "tuna", "cod", "anchovy", "trout", "tilapia"].filter((fish) => text.includes(fish));
+    if (fishMatches.length) detected.set("finfish", `Fish (${[...new Set(fishMatches)].join(", ")})`);
+    else if (/\bfish\b/.test(text)) detected.set("finfish", "Fish (type not specified)");
+    const shellfishMatches = ["crab", "lobster", "shrimp", "prawn", "crayfish"].filter((shellfish) => text.includes(shellfish));
+    if (shellfishMatches.length) detected.set("crustacean shellfish", `Crustacean shellfish (${[...new Set(shellfishMatches)].join(", ")})`);
+    else if (/shellfish|crustacean/.test(text)) detected.set("crustacean shellfish", "Crustacean shellfish (type not specified)");
   });
 
   const ordered = MAJOR_ALLERGENS.filter((allergen) => detected.has(allergen)).map((allergen) => detected.get(allergen));
   if (!ordered.length) return "";
   return `${withPrefix ? "Contains: " : ""}${ordered.join(", ")}`;
-}
-
-function getComplianceChecks(recipe) {
-  const label = recipe.label;
-  const allergens = getAllergenStatement(recipe, true);
-  const productType = recipe.productType || "";
-  const isReviewType = productType.includes("review") || productType.includes("verify");
-  const hasProducer = label.businessName && ((label.useScdaId && label.scdaId) || (!label.useScdaId && label.address));
-  const hasIngredients = recipe.ingredients.some((item) => Number(item.grams) > 0 && (item.label || item.name));
-  return [
-    check("Product name", Boolean(label.productName || recipe.name), "Required on the label."),
-    check("Producer identity", Boolean(hasProducer), "Use business name plus street address, or request and use an SCDA Home-based Food ID number."),
-    check("Ingredient order", hasIngredients, "Ingredients are generated by descending gram weight from the formula."),
-    check("Cottage disclosure", true, "The current South Carolina all-caps disclosure is included exactly."),
-    check("Allergens", Boolean(allergens), "List each major allergen or use the broad major-allergen disclaimer allowed by the SCDA fact sheet.", "warn"),
-    check("Net quantity", Boolean(label.netWeightG && label.netWeightOz), "Packaged consumer goods should show metric and inch/pound units."),
-    check("No health claims", !label.healthClaims, "SCDA says no health claims may be made with home-based food products."),
-    check("Food eligibility", !isReviewType, "Verify any enriched, filled, refrigerated, or unusual bread before sale.", isReviewType ? "warn" : "ok"),
-    check("Local review", Boolean(label.localReviewComplete), "SC law applies in the absence of a local ordinance to the contrary; check your city or county rules.", "warn"),
-  ];
-}
-
-function check(titleText, ok, copy, defaultLevel = "ok") {
-  return {
-    title: titleText,
-    level: ok ? "ok" : defaultLevel === "warn" ? "warn" : "bad",
-    copy,
-  };
 }
 
 function renderCheck(item) {
@@ -2595,6 +2751,15 @@ function renderCheck(item) {
         <span class="check-copy">${escapeHtml(item.copy)}</span>
       </div>
     </div>
+  `;
+}
+
+function renderReadinessChecklist(readiness) {
+  return `
+    <h4>Required before printing</h4>
+    ${readiness.blockers.map(renderCheck).join("")}
+    <h4>Warnings to review</h4>
+    ${readiness.warnings.map(renderCheck).join("")}
   `;
 }
 
@@ -2837,7 +3002,7 @@ function duplicateRecipe() {
   copy.id = uid();
   copy.name = `${source.name} Copy`;
   copy.status = "Draft";
-  copy.label.squareSku = makeSquareSku(copy);
+  copy.catalog.sku = generateSku(copy, state.recipes);
   copy.createdAt = new Date().toISOString();
   copy.updatedAt = copy.createdAt;
   copy.ingredients = copy.ingredients.map((item) => ({ ...item, id: uid() }));
@@ -2986,10 +3151,17 @@ function readPositiveMetricValue(selector, message) {
 
 function scaleRecipe(recipe, factor, newYield, message) {
   const previousIngredients = snapshotRecipeIngredients(recipe);
-  recipe.ingredients = recipe.ingredients.map((ingredient) => ({
-    ...ingredient,
-    grams: scaleGramValue(ingredient.grams, factor),
-  }));
+  recipe.ingredients = recipe.ingredients.map((ingredient) => {
+    if (ingredient.conversionError || !Number.isFinite(Number(ingredient.grams))) {
+      return { ...ingredient };
+    }
+    const scaled = {
+      ...ingredient,
+      grams: scaleGramValue(ingredient.grams, factor),
+    };
+    syncIngredientSourceFromGrams(scaled);
+    return scaled;
+  });
   syncAllIngredientReferencesInRecipeText(recipe, previousIngredients);
 
   recipe.yieldCount = Number(newYield || recipe.yieldCount || 1);
@@ -3023,18 +3195,18 @@ function conversionIngredient(recipe) {
 function convertCupsToWeight(recipe) {
   const ingredient = conversionIngredient(recipe);
   const input = document.querySelector("#conversion-cups")?.value;
+  const output = document.querySelector("#conversion-result");
   if (!ingredient) {
     showToast("Add an ingredient before converting.");
     return;
   }
   try {
     const result = convertToGrams(input, "cup", ingredient);
-    rememberUndo();
-    ingredient.grams = result.grams < 100 ? Math.round(result.grams * 10) / 10 : Math.round(result.grams);
-    ingredient.unit = "g";
-    syncRecipeDerivedFields(recipe);
-    persistAndRender(`${ingredient.name || "Ingredient"} converted to ${formatMeasurement(ingredient.grams, "g")}${result.estimated ? " (estimate)" : ""}.`);
+    if (output) {
+      output.textContent = `${formatMeasurement(result.grams, "g")}${result.estimated ? " (estimate)" : ""}`;
+    }
   } catch (error) {
+    if (output) output.textContent = "Enter a valid cup amount";
     showToast(error.message);
   }
 }
@@ -3071,6 +3243,7 @@ function syncRecipeDerivedFields(recipe, previousName = "") {
   const inferredProductType = inferRecipeProductType(recipe);
 
   if (!recipe.label) recipe.label = makeDefaultLabel();
+  if (!recipe.catalog) recipe.catalog = makeDefaultCatalog(recipe);
   if (!recipe.draftBatch) recipe.draftBatch = makeDraftBatch();
   if (!recipe.label.productName || recipe.label.productName === previousName) {
     recipe.label.productName = recipe.name;
@@ -3157,15 +3330,22 @@ function getStarterWaterGrams(recipe) {
 }
 
 function setRoleTotal(recipe, role, targetTotal, makeFallbackIngredient) {
-  const items = recipe.ingredients.filter((ingredient) => ingredient.role === role);
+  const items = recipe.ingredients.filter((ingredient) => (
+    ingredient.role === role &&
+    !ingredient.conversionError &&
+    Number.isFinite(Number(ingredient.grams))
+  ));
   if (!items.length) {
-    recipe.ingredients.push(makeFallbackIngredient());
+    const ingredient = makeFallbackIngredient();
+    syncIngredientSourceFromGrams(ingredient);
+    recipe.ingredients.push(ingredient);
     return;
   }
 
   const currentTotal = roleSum(recipe.ingredients, role);
   if (!currentTotal) {
     items[0].grams = scaleGramValue(targetTotal, 1);
+    syncIngredientSourceFromGrams(items[0]);
     return;
   }
 
@@ -3178,6 +3358,7 @@ function setRoleTotal(recipe, role, targetTotal, makeFallbackIngredient) {
     .slice(0, -1)
     .reduce((total, ingredient) => total + Number(ingredient.grams || 0), 0);
   items[items.length - 1].grams = Math.max(0, scaleGramValue(targetTotal - adjustedExceptLast, 1));
+  items.forEach(syncIngredientSourceFromGrams);
 }
 
 function scaleStepDurations(recipe, targetMinutes) {
@@ -4843,6 +5024,7 @@ function makeSignatureStrawberryBananaBreadRecipe() {
 }
 
 function normalizeRecipe(recipe) {
+  const legacyLabel = recipe.label || {};
   const normalized = {
     ...recipe,
     id: recipe.id || uid(),
@@ -4865,17 +5047,7 @@ function normalizeRecipe(recipe) {
       humidity: 55,
       ...(recipe.environment || {}),
     },
-    ingredients: (recipe.ingredients || []).map((item) => ({
-      id: item.id || uid(),
-      name: item.name || "",
-      label: item.label || item.name || "",
-      grams: Number(item.grams || 0),
-      role: item.role || "other",
-      unit: item.unit || "g",
-      costPerKg: Number(item.costPerKg || 0),
-      notes: item.notes || "",
-      allergens: item.allergens || "",
-    })),
+    ingredients: (recipe.ingredients || []).map(normalizeIngredient),
     steps: (recipe.steps || []).map((item) => ({
       id: item.id || uid(),
       name: item.name || "",
@@ -4889,8 +5061,16 @@ function normalizeRecipe(recipe) {
       ...makeDefaultLabel(),
       ...(recipe.label || {}),
     },
+    catalog: {
+      ...makeDefaultCatalog(recipe),
+      ...(recipe.catalog || {}),
+      sku: recipe.catalog?.sku || legacyLabel.squareSku || "",
+      variationName: recipe.catalog?.variationName || legacyLabel.squareVariationName || "Regular",
+      description: recipe.catalog?.description || legacyLabel.squareDescription || "",
+      price: Number(recipe.catalog?.price ?? recipe.pricing?.sellingPrice ?? 0),
+    },
   };
-  if (!normalized.label.squareSku) normalized.label.squareSku = makeSquareSku(normalized);
+  if (!normalized.catalog.sku) normalized.catalog.sku = makeSquareSku(normalized);
   if (!normalized.ingredients.length) normalized.ingredients = [newIngredient()];
   if (!recipe.label?.templateVersion) {
     if (!normalized.label.businessName || normalized.label.businessName === "Laurens Home Bakery") normalized.label.businessName = "Faithful & True Bread and Baked Goods";
@@ -5020,6 +5200,16 @@ function makeDefaultLabel() {
     manualAllergens: [],
     healthClaims: "",
     localReviewComplete: false,
+    allergenConfirmedNone: false,
+  };
+}
+
+function makeDefaultCatalog(recipe = {}) {
+  return {
+    sku: "",
+    variationName: "Regular",
+    description: "",
+    price: Number(recipe.pricing?.sellingPrice || 0),
   };
 }
 
@@ -5087,12 +5277,53 @@ function newIngredient() {
     name: "",
     label: "",
     grams: 0,
+    sourceAmount: "0",
+    sourceUnit: "g",
+    conversionEstimated: false,
+    conversionEstimateReason: "",
+    conversionError: "",
     role: "other",
     unit: "g",
     costPerKg: 0,
     notes: "",
     allergens: "",
   };
+}
+
+function normalizeIngredient(item) {
+  const legacyUnit = item.sourceUnit || item.unit || "g";
+  const hasExplicitSource = item.sourceAmount !== undefined || item.amount !== undefined;
+  const sourceUnit = hasExplicitSource ? legacyUnit : "g";
+  const sourceAmount = hasExplicitSource ? String(item.sourceAmount ?? item.amount ?? "") : String(Number(item.grams || 0));
+  const normalized = {
+    id: item.id || uid(),
+    name: item.name || "",
+    label: item.label || item.name || "",
+    grams: Number(item.grams || 0),
+    sourceAmount,
+    sourceUnit,
+    conversionEstimated: Boolean(item.conversionEstimated ?? item.estimated),
+    conversionEstimateReason: item.conversionEstimateReason || "",
+    conversionError: "",
+    role: item.role || "other",
+    unit: "g",
+    costPerKg: Number(item.costPerKg || 0),
+    notes: item.notes || "",
+    allergens: item.allergens || "",
+  };
+  if (hasExplicitSource) updateIngredientConversion(normalized);
+  return normalized;
+}
+
+function formatSourceAmount(value) {
+  return Number.isFinite(value) ? String(Number(value.toFixed(4))) : "";
+}
+
+function getSkuStatus(recipe) {
+  if (!recipe.catalog?.sku) return "A SKU is required before export.";
+  return isSkuUnique(recipe.catalog.sku, state.recipes, recipe.id)
+    ? `SKU ${recipe.catalog.sku} is unique in this recipe library.`
+    : `SKU ${recipe.catalog.sku} is already used by another recipe.`;
 }
 
 function newStep() {
