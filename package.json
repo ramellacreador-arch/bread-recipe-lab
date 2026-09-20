@@ -5,7 +5,8 @@
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test tests/*.test.mjs",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "migration:dry-run": "node scripts/migration-dry-run.mjs"
   },
   "devDependencies": { "drizzle-kit": "0.31.4", "drizzle-orm": "0.44.5" }
 }
