@@ -1,7 +1,13 @@
 window.breadCloud = (() => {
   let revision = 0, baseline = '', ready = false, busy = false, conflict = false;
+  let pendingState = null;
   const pendingKey = 'bread-lab-unsynced-backup';
   const status = (message) => { const node = document.querySelector('#save-status'); if (node) node.textContent = message; };
+  const recoveryButton = () => document.querySelector('#recover-edits');
+  const showRecovery = (available) => {
+    const button = recoveryButton();
+    if (button) button.hidden = !available;
+  };
   async function request(method, data) {
     const response = await fetch('/api/workspace', {method, cache: 'no-store', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, ...(data ? {body: JSON.stringify(data)} : {})});
     if (!response.ok) {
@@ -11,7 +17,45 @@ window.breadCloud = (() => {
     }
     return response.json();
   }
-  function backup(state) { try { localStorage.setItem(pendingKey, JSON.stringify(state)); } catch { status('Device backup is full. Export your edits before closing.'); } }
+  function backup(state) {
+    try {
+      localStorage.setItem(pendingKey, JSON.stringify(state));
+      showRecovery(true);
+    } catch {
+      status('Device backup is full. Unsynced edits may be lost if you close this page.');
+    }
+  }
+  async function flushPending() {
+    if (!ready || busy || conflict) return;
+    busy = true;
+    try {
+      while (pendingState && !conflict) {
+        const current = pendingState;
+        pendingState = null;
+        status('Syncing...');
+        try {
+          const saved = await request('PUT', {state: current.state, revision});
+          revision = saved.revision;
+          baseline = current.serialized;
+          if (localStorage.getItem(pendingKey) === current.serialized) {
+            localStorage.removeItem(pendingKey);
+            showRecovery(false);
+          }
+        } catch (error) {
+          pendingState = pendingState || current;
+          conflict = error.code === 409;
+          status(conflict
+            ? 'Another device saved changes. Download your unsynced edits before reloading.'
+            : error.message);
+          showRecovery(true);
+          break;
+        }
+      }
+      if (!pendingState && !conflict) status('Synced across devices');
+    } finally {
+      busy = false;
+    }
+  }
   return {
     async start(getState, replaceState) {
       const remote = await request('GET');
@@ -21,7 +65,10 @@ window.breadCloud = (() => {
       ready = true;
       if (!remote.state) await this.save(getState());
       else status('Synced across devices');
-      if (localStorage.getItem(pendingKey)) status('Unsynced backup available. Use Recover Edits before making changes.');
+      if (localStorage.getItem(pendingKey)) {
+        status('Unsynced edits are available. Download them before continuing.');
+        showRecovery(true);
+      }
       setInterval(async () => {
         if (!ready || busy || conflict || JSON.stringify(getState()) !== baseline || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) return;
         busy = true;
@@ -40,28 +87,22 @@ window.breadCloud = (() => {
     async save(state) {
       if (!ready) return;
       const serialized = JSON.stringify(state);
-      if (serialized === baseline) return;
+      if (serialized === baseline && !pendingState) return;
       backup(state);
-      if (busy || conflict) return;
-      busy = true;
-      status('Syncing...');
-      try {
-        const saved = await request('PUT', {state, revision});
-        revision = saved.revision;
-        baseline = serialized;
-        if (localStorage.getItem(pendingKey) === serialized) localStorage.removeItem(pendingKey);
-        status('Synced across devices');
-      } catch (error) {
-        conflict = error.code === 409;
-        status(conflict ? 'Another device saved changes. Export your edits, then reload to see the latest version.' : error.message);
-      } finally { busy = false; }
+      pendingState = {state, serialized};
+      await flushPending();
     },
     recover() {
       const data = localStorage.getItem(pendingKey);
-      if (!data) return status('No unsynced backup on this device.');
+      if (!data) {
+        showRecovery(false);
+        status('No unsynced edits are available to recover.');
+        return;
+      }
       const url = URL.createObjectURL(new Blob([data], {type: 'application/json'}));
       const link = document.createElement('a'); link.href = url; link.download = 'bread-lab-recovered-edits.json'; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status('Unsynced edits downloaded.');
     }
   };
 })();

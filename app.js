@@ -1,5 +1,5 @@
 import { convertFromGrams, convertToGrams, formatMeasurement } from "./conversion.js";
-import { buildSquareCsv, generateSku, getLabelReadiness, isSkuUnique, normalizeSku } from "./recipe-workflow.js";
+import { buildSquareCsv, generateSku, getLabelReadiness, hasDairyButter, isSkuUnique, normalizeSku } from "./recipe-workflow.js";
 
 const STORAGE_KEY = "bread-recipe-lab-v1";
 const RECIPE_SEED_KEY = "bread-recipe-lab-seeds-v1";
@@ -97,7 +97,7 @@ const importFile = document.querySelector("#import-file");
 applySavedTheme();
 if (window.BREAD_CLOUD) {
   workspace.innerHTML = '<p role="status">Opening your private bakery workspace...</p>';
-  document.querySelector('.topbar-actions').insertAdjacentHTML('beforeend', '<button class="ghost-button" id="recover-cloud-edits" type="button">Recover Edits</button><a class="ghost-button" href="/signout-with-chatgpt?return_to=%2F">Sign out</a>');
+  document.querySelector('.topbar-actions').insertAdjacentHTML('beforeend', '<a class="ghost-button" href="/signout-with-chatgpt?return_to=%2F">Sign out</a>');
   document.querySelector('.app-shell').inert = true;
   window.breadCloud.start(() => state, (remote) => {
     state = normalizeAppState(remote);
@@ -135,7 +135,7 @@ document.addEventListener("click", (event) => {
   const recipe = getActiveRecipe();
   const action = target.dataset.action || target.id;
   switch (action) {
-    case "recover-cloud-edits":
+    case "recover-edits":
       window.breadCloud?.recover();
       break;
     case "manual-save":
@@ -2771,6 +2771,7 @@ function getAllergenStatement(recipe, withPrefix) {
     if (shellfishMatches.length) detected.set("crustacean shellfish", `Crustacean shellfish (${[...new Set(shellfishMatches)].join(", ")})`);
     else if (/shellfish|crustacean/.test(text)) detected.set("crustacean shellfish", "Crustacean shellfish (type not specified)");
   });
+  if (hasDairyButter(recipe.ingredients)) detected.set("milk", title("milk"));
 
   const ordered = MAJOR_ALLERGENS.filter((allergen) => detected.has(allergen)).map((allergen) => detected.get(allergen));
   if (!ordered.length) return "";

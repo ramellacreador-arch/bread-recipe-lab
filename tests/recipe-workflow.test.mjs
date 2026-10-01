@@ -4,6 +4,7 @@ import {
   buildSquareCsv,
   generateSku,
   getLabelReadiness,
+  hasDairyButter,
   isSkuUnique,
   normalizeSku,
 } from "../recipe-workflow.js";
@@ -27,6 +28,13 @@ test("normalizes, validates, and generates collision-free SKUs", () => {
   ];
   assert.equal(isSkuUnique("ft-coun-loaf", recipes, "b"), false);
   assert.equal(generateSku({ id: "c", name: "Country Loaf" }, recipes), "FT-COUN-LOAF-3");
+});
+
+test("detects generic dairy butter without classifying non-dairy butter spreads as milk", () => {
+  assert.equal(hasDairyButter([{ name: "Butter" }]), true);
+  assert.equal(hasDairyButter([{ label: "softened butter" }]), true);
+  assert.equal(hasDairyButter([{ name: "Sunflower butter" }]), false);
+  assert.equal(hasDairyButter([{ name: "Cookie butter" }]), false);
 });
 
 test("label readiness separates blockers from warnings and honors estimate metadata", () => {

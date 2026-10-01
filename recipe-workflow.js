@@ -66,6 +66,14 @@ function getLabelReadiness(recipe, allergenStatement = "") {
   return { blockers, warnings, ready: blockers.every((item) => item.ok) };
 }
 
+function hasDairyButter(ingredients) {
+  const nonDairyButter = /^(?:peanut|almond|cashew|pistachio|hazelnut|macadamia|walnut|pecan|nut|seed|sunflower(?: seed)?|soy|coconut|apple|pumpkin|cocoa|cookie)\s+butter\b/;
+  return (ingredients || []).some((ingredient) => {
+    const name = String(ingredient?.name || ingredient?.label || "").trim().toLowerCase().replace(/\s+/g, " ");
+    return /\bbutter\b/.test(name) && !nonDairyButter.test(name);
+  });
+}
+
 function requirement(title, ok, copy) {
   return { title, ok, level: ok ? "ok" : "bad", copy };
 }
@@ -74,4 +82,4 @@ function warning(title, ok, copy) {
   return { title, ok, level: ok ? "ok" : "warn", copy };
 }
 
-export { buildSquareCsv, csvCell, generateSku, getLabelReadiness, isSkuUnique, normalizeSku, SQUARE_HEADERS };
+export { buildSquareCsv, csvCell, generateSku, getLabelReadiness, hasDairyButter, isSkuUnique, normalizeSku, SQUARE_HEADERS };

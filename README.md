@@ -1,9 +1,19 @@
 # Bread Recipe Lab
 
-Open `index.html` in a browser to use the recipe workspace.
+Serve the app over local HTTP so browsers can load its JavaScript modules:
 
-The app stores recipes in the browser on this machine. Use Export and Import to
-move recipes between browsers or make a backup.
+```powershell
+cd path\to\bread-lab
+py -m http.server 8000
+```
+
+Then open <http://127.0.0.1:8000> in your browser. Keep the server window open
+while using the app. The HTTP address has separate browser storage from a
+`file://` copy, so recipes saved under one address do not automatically appear
+under the other.
+
+The local app stores recipes in this browser on this device. Use Export and
+Import to move recipes between browsers or make a backup.
 
 The label generator is based on official South Carolina, FDA, FTC, and Laurens
 County sources checked July 6, 2026. It is a practical checklist, not legal
